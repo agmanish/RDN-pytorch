@@ -24,8 +24,12 @@ def preprocess(img, device):
     return x, ycbcr
 
 
-def calc_psnr(img1, img2, max=255.0):
-    return 10. * ((max ** 2) / ((img1 - img2) ** 2).mean()).log10()
+def calc_psnr(img1, img2):
+    return 10. * torch.log10(1. / torch.mean((img1 - img2) ** 2))
+
+def calc_ssim(preds, target) :
+    ssim = StructuralSimilarityIndexMeasure()
+    return ssim(preds, target)
 
 
 class AverageMeter(object):
