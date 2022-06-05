@@ -11,8 +11,8 @@ from tqdm import tqdm
 
 from models import RDN
 from datasets import TrainDataset, EvalDataset
-from utils import AverageMeter, calc_psnr, convert_rgb_to_y, denormalize
-
+from utils import AverageMeter, calc_psnr, convert_rgb_to_y, denormalize, calc_ssim
+import json
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -31,6 +31,7 @@ if __name__ == '__main__':
     parser.add_argument('--num-epochs', type=int, default=800)
     parser.add_argument('--num-workers', type=int, default=8)
     parser.add_argument('--seed', type=int, default=123)
+    parser.add_argument('--opm-dir', type=str, required=True)
     args = parser.parse_args()
 
     args.outputs_dir = os.path.join(args.outputs_dir, 'x{}'.format(args.scale))
@@ -73,6 +74,10 @@ if __name__ == '__main__':
     best_weights = copy.deepcopy(model.state_dict())
     best_epoch = 0
     best_psnr = 0.0
+    best_ssim = 0.0
+    loss_dict={}
+    psnr_dict={}
+    ssim_dict={}
 
     for epoch in range(args.num_epochs):
         for param_group in optimizer.param_groups:
@@ -103,12 +108,14 @@ if __name__ == '__main__':
                 t.set_postfix(loss='{:.6f}'.format(epoch_losses.avg))
                 t.update(len(inputs))
 
+        loss_dict[str(epoch)]=epoch_losses.avg
         if (epoch + 1) % 10 == 0:
             torch.save(model.state_dict(), os.path.join(args.outputs_dir, 'epoch_{}.pth'.format(epoch)))
 
         model.eval()
         epoch_psnr = AverageMeter()
-
+        epoch_ssim = AverageMeter()
+        
         for data in eval_dataloader:
             inputs, labels = data
 
@@ -125,13 +132,36 @@ if __name__ == '__main__':
             labels = labels[args.scale:-args.scale, args.scale:-args.scale]
 
             epoch_psnr.update(calc_psnr(preds, labels), len(inputs))
+            epoch_ssim.update(calc_ssim(preds, labels), len(inputs))
+
+        psnr_dict[str(epoch)]=epoch_psnr.avg.item()
+        ssim_dict[str(epoch)]=epoch_ssim.avg.item()
 
         print('eval psnr: {:.2f}'.format(epoch_psnr.avg))
+        print('eval ssim: {:.2f}'.format(epoch_ssim.avg))
 
         if epoch_psnr.avg > best_psnr:
             best_epoch = epoch
-            best_psnr = epoch_psnr.avg
+            best_psnr = epoch_psnr.avg.item()
+            best_ssim = epoch_ssim.avg.item()
             best_weights = copy.deepcopy(model.state_dict())
 
     print('best epoch: {}, psnr: {:.2f}'.format(best_epoch, best_psnr))
     torch.save(best_weights, os.path.join(args.outputs_dir, 'best.pth'))
+        train_metrics={
+        "scale":args.scale,
+        "learning_rate":args.lr,
+        "batch_size":args.batch_size,
+        "num_epochs":args.num_epochs,
+        "num_workers":args.num_workers,
+        "seed":args.seed,
+        "loss_vs_epoch":loss_dict,
+        "psnr_vs_epoch":psnr_dict,
+        "ssim_vs_epoch":ssim_dict,
+        "best_epoch":best_epoch,
+        "best_psnr":best_psnr,
+        "best_ssim":best_ssim
+    }
+    json_path=args.opm_dir+"/train_metrics.json"
+    with open(json_path, "w") as outfile:
+        json.dump(train_metrics, outfile)
